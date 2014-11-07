@@ -272,14 +272,14 @@ class Table(object):
                     for column in columns:
                         value = instance[column.name]
                         values.append(dump(value))
-                    sql += link + (" (\n  %s\n)" % ",\n  ".join(values))
+                    insert_statement += link + (" (\n  %s\n)" % ",\n  ".join(values))
                     link = ","
 
                 for i in range(1, 3):
                     connection = Warehouse.get()
                     try:
                         cursor = connection.cursor()
-                        cursor.execute(sql)
+                        cursor.execute(insert_statement)
                         cursor.close()
 
                     except Exception as e:
