@@ -1,17 +1,14 @@
 from contextlib import closing
-from datetime import date
-from distutils.version import StrictVersion
 from functools import partial
 import logging
-import math
-import time
-
-from pathos import multiprocessing
 
 from column import *
 from exceptions import classify_error, BrokenPipeError
 from settings import settings
 from utils import _camel_to_snake, batch_process, batch_up, dump, escaped
+from template import TemplateConstructor
+from utils import (_camel_to_snake, _camel_to_title_case, dump, escaped,
+                   classproperty)
 from warehouse import Warehouse
 
 
@@ -92,6 +89,7 @@ class TableMetaclass(type):
         if 'dimension' in [i.__name__.lower() for i in bases]:
             tablename += '_dimension'
         attributes.setdefault("__tablename__", tablename)
+        attributes.setdefault("__schemaname__", _camel_to_title_case(name))
 
         column_set = _ColumnSet()
         for base in bases:
@@ -143,6 +141,10 @@ class Table(object):
 
     INSERT = "INSERT IGNORE"
 
+    @classproperty
+    def trigger_name(cls):
+        return 'created_timestamp_' + cls.__tablename__
+
     @classmethod
     def create_trigger(cls):
         """ There's a constraint in earlier versions of MySQL where only one
@@ -150,32 +152,35 @@ class Table(object):
 
         These triggers get around that problem.
 
+        Returns:
+            True if a trigger was created, or False if the trigger already
+            exists.
+
         """
-        drop_trigger = """\
-        DROP TRIGGER IF EXISTS created_timestamp_{tablename}
-        """
-        create_trigger = """\
-        CREATE TRIGGER created_timestamp_{tablename}
-        BEFORE INSERT ON {tablename}
+        if cls.trigger_name in Warehouse.trigger_names:
+            log.info('%s already exists - skipping.' % cls.trigger_name)
+            return False
+
+        trigger = """\
+        CREATE TRIGGER %s
+        BEFORE INSERT ON %s
         FOR EACH ROW BEGIN
             IF NEW.created = '0000-00-00 00:00:00' THEN
                 SET NEW.created = NOW();
             END IF;
         END
-        """
-        min_version = settings.MYSQL_MIN_VERSION        
-        if min_version and StrictVersion(Warehouse.version) >= StrictVersion(
-                settings.MYSQL_MIN_VERSION):
-            return
+        """ % (cls.trigger_name, cls.__tablename__)
 
         connection = Warehouse.get()
         with closing(connection.cursor()) as cursor:
-            for query in (drop_trigger, create_trigger):
-                try:
-                    cursor.execute(query.format(tablename=cls.__tablename__))
-                except Exception as exception:
-                    classify_error(exception)
-                    raise exception
+            try:
+                cursor.execute(trigger)
+            except Exception as exception:
+                classify_error(exception)
+                raise exception
+            else:
+                log.info('%s created.' % cls.trigger_name)
+                return True
 
     @classmethod
     def build(cls):
@@ -188,17 +193,23 @@ class Table(object):
             cls.__source__.build()
         except AttributeError:
             pass
-        cls.create_table(if_not_exists=True)
+        cls.create_table()
         cls.create_trigger()
 
     @classmethod
-    def create_table(cls, if_not_exists=False):
+    def create_table(cls):
         """ Create this table in the current data warehouse.
+
+        Returns:
+            True if the table was created, or False if the table already
+            exists.
+
         """
-        if if_not_exists:
-            verb = "CREATE TABLE IF NOT EXISTS"
-        else:
-            verb = "CREATE TABLE"
+        if cls.table_exists:
+            log.info('%s already exists - skipping.' % cls.__tablename__)
+            return False
+
+        verb = "CREATE TABLE"
         columns = ",\n  ".join(col.expression for col in cls.__columns__)
         sql = "%s %s (\n  %s\n)" % (verb, cls.__tablename__, columns)
         for key, value in cls.__tableargs__.items():
@@ -211,6 +222,8 @@ class Table(object):
             except Exception as exception:
                 classify_error(exception)
                 raise exception
+            else:
+                return True
 
     @classmethod
     def drop_table(cls, if_exists=False):
@@ -231,7 +244,7 @@ class Table(object):
             else:
                 connection.commit()
 
-    @classmethod
+    @classproperty
     def table_exists(cls):
         """ Check if this table exists in the current data warehouse.
         """
@@ -333,6 +346,10 @@ class Table(object):
         log.info("Fetched %s record%s", count, "" if count == 1 else "s",
                  extra={"table": cls.__tablename__})
         cls.insert(*instances)
+
+    @classmethod
+    def template(cls):
+        print TemplateConstructor(cls).rendered
 
     def __getitem__(self, column_name):
         """ Get a value by table column name.

@@ -61,6 +61,7 @@ class Source(object):
 
     @classmethod
     def select(cls, for_class, since=None):
+<<<<<<< HEAD
         records = cls.execute(since=since)
 
         expanded_records = []
@@ -78,6 +79,14 @@ class Source(object):
         log.info('Hydrating data.', extra={"table": for_class.__tablename__})
         return batch_process(expanded_records, hydrated_batch, for_class,
             tablename=for_class.__tablename__)
+=======
+        for source in (cls.execute(since=since),
+                       getattr(cls, 'extra_rows', [])):
+            for record in source:
+                dict_record = dict(record)
+                cls._apply_expansions(dict_record)
+                yield hydrated(for_class, dict_record.items())
+>>>>>>> master
 
     @classmethod
     def _apply_expansions(cls, data):

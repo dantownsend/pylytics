@@ -1,9 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from distutils.version import StrictVersion
 
-from warehouse import Warehouse
-from settings import settings
 from utils import dump, escaped
 
 
@@ -19,9 +16,10 @@ _type_map = {
    float: "DOUBLE",
    int: "INT",
    long: "INT",
-   str: "VARCHAR(%s)",
    timedelta: "TIME",
    time: "TIME",
+   basestring: "VARCHAR(%s)",
+   str: "VARCHAR(%s)",
    unicode: "VARCHAR(%s)",
    bytearray: "VARBINARY(%s)"
 }
@@ -34,6 +32,7 @@ class Column(object):
 
     __columnblock__ = 5
     default_size = {
+        basestring: 40,
         str: 40,
         unicode: 40,
         Decimal: (6, 2),
@@ -41,7 +40,7 @@ class Column(object):
         }
 
     def __init__(self, name, type, size=None, optional=False,
-                 default=NotImplemented, order=None, comment=None, null=None):
+                 default=NotImplemented, order=None, comment=None):
         self.name = name
         self.type = type
         self.size = size
@@ -49,6 +48,7 @@ class Column(object):
         self.default = default
         self.order = order
         self.comment = comment
+        self.__schemaname__ = name.replace('_', ' ')
 
     def __repr__(self):
         return self.expression
@@ -108,8 +108,10 @@ class DimensionKey(Column):
 
     __columnblock__ = 3
 
-    def __init__(self, name, dimension, order=None, comment=None, null=None):
-        Column.__init__(self, name, int, order=order, comment=comment)
+    def __init__(self, name, dimension, order=None, comment=None,
+                 optional=False):
+        Column.__init__(self, name, int, order=order, comment=comment,
+                        optional=optional)
         self.dimension = dimension
 
     @property
@@ -204,11 +206,4 @@ class CreatedTimestamp(AutoColumn):
 
     @property
     def default_clause(self):
-        # There's a limitation in older MySQL versions where only one `DEFAULT
-        # CURRENT_TIMESTAMP` column can exist. So we use a trigger to
-        # update this column.
-        min_version = settings.MYSQL_MIN_VERSION
-        if min_version and (StrictVersion(Warehouse.version) >= StrictVersion(
-                min_version)):
-            return "DEFAULT CURRENT_TIMESTAMP"
         return "DEFAULT 0"

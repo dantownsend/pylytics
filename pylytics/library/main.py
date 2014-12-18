@@ -56,21 +56,6 @@ def print_summary(errors):
         log.info("\n".join(items))
 
 
-def valid_time_range(start_time, end_time, delta):
-    # We have to convert time objects to datetime so timedeltas can be used.
-    fake_date = datetime.date(2000, 1, 1)
-    start = datetime.datetime.combine(fake_date, start_time)
-    end = datetime.datetime.combine(fake_date, end_time)
-
-    while start < end:
-        yield start.time()
-        start += delta
-
-        if start.date().day == 2:
-            # Time has wrapped around.
-            break
-
-
 def find_scheduled(all_fact_classes):
     """
     Finds which facts are scheduled to run now.
@@ -85,21 +70,8 @@ def find_scheduled(all_fact_classes):
     """
     facts_to_update = []
 
-    now = datetime.datetime.now(tz=UTC).time()
-    now.replace(second=0)
-    now.replace(microsecond=0)
-    now.replace(minute=(now.minute - now.minute % 10))
-
     for fact in all_fact_classes:
-        starts = fact.__scheduled__.starts_tzaware
-        ends = fact.__scheduled__.ends_tzaware
-        repeats = fact.__scheduled__.repeats
-
-        if starts > current_time:
-            continue
-        elif ends < current_time:
-            continue
-        elif current_time in valid_time_range(start, ends, repeats):
+        if fact.__schedule__.should_run:
             facts_to_update.append(fact)
 
     return facts_to_update
@@ -113,9 +85,6 @@ class Commander(object):
     def run(self, command, *facts):
         """ Run command for each fact in facts.
         """
-        _connection = connection.get_named_connection(settings.pylytics_db)
-        Warehouse.use(_connection)
-
         all_fact_classes = get_all_fact_classes()
 
         # Normalise the collection of facts supplied to remove duplicates,
@@ -138,6 +107,10 @@ class Commander(object):
             # Remove any duplicates:
             facts_to_run = list(set(facts_to_run))
 
+        if command != 'template':
+            _connection = connection.get_named_connection(settings.pylytics_db)
+            Warehouse.use(_connection)
+
         # Execute the command on each fact class.
         for fact_class in facts_to_run:
             try:
@@ -148,9 +121,10 @@ class Commander(object):
             else:
                 command_function()
 
-        # Close the Warehouse connection.
-        log.info('Closing Warehouse connection.')
-        Warehouse.get().close()
+        if command != 'template':
+            # Close the Warehouse connection.
+            log.info('Closing Warehouse connection.')
+            Warehouse.get().close()
 
 
 # TODO Make this configurable via settings.py.
@@ -217,13 +191,11 @@ def main():
     command = args['command'][0]
     commander = Commander(settings.pylytics_db)
 
-    if command == 'update':
+    if command in ('update', 'historical'):
         commander.run('build', *args['fact'])
-        commander.run('update', *args['fact'])
-    elif command == 'historical':
-        commander.run('historical', *args['fact'])
-    elif command == 'build':
-        commander.run('build', *args['fact'])
+        commander.run(command, *args['fact'])
+    elif command in ('build', 'template'):
+        commander.run(command, *args['fact'])
     else:
         log.error("Unknown command: %s", command)
 
