@@ -6,6 +6,7 @@ from logging.handlers import TimedRotatingFileHandler
 import sys
 
 import connection
+from dimension import Dimension
 from log import ColourFormatter, bright_white
 from fact import Fact
 from warehouse import Warehouse
@@ -37,6 +38,18 @@ def get_all_fact_classes():
         if inspect.isclass(attribute) and Fact in inspect.getmro(attribute):
             facts.append(attribute)
     return facts
+
+
+def get_all_dimension_classes():
+    """Return all of the dimension classes available."""
+    dimension = __import__('dimension')
+    public_attributes = [i for i in dir(dimension) if not i.startswith('_')]
+    dimensions = []
+    for attribute_name in public_attributes:
+        attribute =  getattr(dimension, attribute_name)
+        if inspect.isclass(attribute) and Dimension in inspect.getmro(attribute):
+            dimensions.append(attribute)
+    return dimensions
 
 
 def print_summary(errors):
